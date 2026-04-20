@@ -153,7 +153,7 @@ def _rs_subtree(rs, ns: str, v1, apps) -> Tree:
     try:
         pods = v1.list_namespaced_pod(ns, label_selector=selector).items
         for pod in pods:
-            node.add_renderable(_pod_subtree(pod, ns, v1))
+            node.children.append(_pod_subtree(pod, ns, v1))
     except Exception as e:
         node.add(f"[dim]could not list pods: {e}[/dim]")
 
@@ -189,7 +189,7 @@ def _svc_subtree(svc, ns: str, v1) -> Tree:
         try:
             pods = v1.list_namespaced_pod(ns, label_selector=selector).items
             for pod in pods:
-                node.add_renderable(_pod_subtree(pod, ns, v1))
+                node.children.append(_pod_subtree(pod, ns, v1))
         except Exception as e:
             node.add(f"[dim]could not list pods for service: {e}[/dim]")
 
@@ -280,7 +280,7 @@ def trace_deployment(name: str, ns: str):
         owned.sort(key=lambda r: -(r.spec.replicas or 0))
 
         for rs in owned:
-            root.add_renderable(_rs_subtree(rs, ns, v1, apps))
+            root.children.append(_rs_subtree(rs, ns, v1, apps))
     except Exception as e:
         root.add(f"[red]Error fetching ReplicaSets: {e}[/red]")
 
@@ -291,7 +291,7 @@ def trace_deployment(name: str, ns: str):
         for svc in svcs:
             sel = svc.spec.selector or {}
             if sel and all(dep_labels.get(k) == v for k, v in sel.items()):
-                root.add_renderable(_svc_subtree(svc, ns, v1))
+                root.children.append(_svc_subtree(svc, ns, v1))
     except Exception as e:
         root.add(f"[dim]could not fetch Services: {e}[/dim]")
 
@@ -321,7 +321,7 @@ def trace_statefulset(name: str, ns: str):
     try:
         pods = v1.list_namespaced_pod(ns, label_selector=selector).items
         for pod in pods:
-            root.add_renderable(_pod_subtree(pod, ns, v1))
+            root.children.append(_pod_subtree(pod, ns, v1))
     except Exception as e:
         root.add(f"[red]Error fetching pods: {e}[/red]")
 
@@ -353,7 +353,7 @@ def trace_daemonset(name: str, ns: str):
     try:
         pods = v1.list_namespaced_pod(ns, label_selector=selector).items
         for pod in pods:
-            root.add_renderable(_pod_subtree(pod, ns, v1))
+            root.children.append(_pod_subtree(pod, ns, v1))
     except Exception as e:
         root.add(f"[red]Error fetching pods: {e}[/red]")
 
@@ -371,10 +371,12 @@ def trace_service(name: str, ns: str):
         console.print(f"[red]Service '{name}' not found in '{ns}': {e}[/red]")
         return
 
-    root = Tree("")
-    root.add_renderable(_svc_subtree(svc, ns, v1))
     console.print(
-        Panel(root, border_style="blue", title=f"Object Trace — Service/{name}")
+        Panel(
+            _svc_subtree(svc, ns, v1),
+            border_style="blue",
+            title=f"Object Trace — Service/{name}",
+        )
     )
 
 
@@ -401,7 +403,7 @@ def trace_ingress(name: str, ns: str):
                 )
                 try:
                     svc = v1.read_namespaced_service(svc_name, ns)
-                    path_node.add_renderable(_svc_subtree(svc, ns, v1))
+                    path_node.children.append(_svc_subtree(svc, ns, v1))
                 except Exception as e:
                     path_node.add(f"[red]Service '{svc_name}' not found: {e}[/red]")
 
