@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented here.
 
+## [0.6.0] — 2026-04-20
+
+### Added
+- **`dashboard` command** — full-screen TUI built with Textual. Left panel lists all commands alphabetically; right panel shows scrollable Rich output. Commands with required arguments open an inline input bar pre-filled with a usage hint. Keybindings: `s` focus output, `l` focus list, `Esc` cancel input, `q` quit.
+- **`interactive` command** — REPL shell with tab-completion and persistent history (`~/.k8s_tool_history`).
+- **`events` command** — browse and filter Kubernetes events by namespace (`-n`), type (`--type`), reason (`--reason`), and age (`--since`, e.g. `30m`, `2h`, `1d`).
+- **`network` command** — checks CoreDNS health, services with no ready endpoints, and NetworkPolicy coverage.
+- **`rbac` command** — surfaces Forbidden/Unauthorized events, ServiceAccounts with no role bindings, and a full role binding summary.
+- **`all` command expanded** — now checks Services (no-endpoint detection), Ingresses, Jobs & CronJobs (failed job detection), HPAs, PersistentVolumes, Namespaces (stuck-terminating detection), ConfigMaps, and Secrets (names and types only — values never shown), in addition to the existing Nodes, PVCs, and Workloads checks.
+- **DaemonSets** added to workload checks in the `all` command.
+- **Alphabetical command ordering** — both the CLI help output and the TUI command list are sorted alphabetically.
+- **`-h` alias** for `--help` on all commands.
+
+### Removed
+- **`verify-readonly` command** — removed; the read-only safeguard in `run_cmd` remains in place.
+- **`--install-completion` / `--show-completion`** flags removed (`add_completion=False`).
+
+### Changed
+- App renamed from `k8s-assist` / `kubemyriad` to **`kubebox`** everywhere (binary name, TITLE, prompt, `pyproject.toml`).
+- PyInstaller spec updated to `kubebox.spec` producing `dist/kubebox`.
+
+### Fixed
+- `_check_nodes` no longer iterates the node list twice; ready-state is computed once into a dict.
+- `_check_workloads` color markup no longer uses unreadable nested ternary f-strings.
+- Stale numbered check comments removed from `check_all_objects`.
+- Stale inline step-comment blocks removed from `interactive()`.
+
 ## [0.5.0] — 2026-04-19
 
 ### Added
