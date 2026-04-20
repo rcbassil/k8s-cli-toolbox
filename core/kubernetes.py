@@ -337,12 +337,91 @@ def check_all_objects(namespace: str = None):
                         e.get("message", "...")[:100] + "...",
                     )
                 console.print(table)
+                _suggest_from_events(items)
             else:
                 console.print(
                     "[green]✓ No Warning events discovered in the cluster.[/green]"
                 )
         except json.JSONDecodeError:
             pass
+
+
+_EVENT_TIPS = {
+    # reason → (tip text, command template)
+    # {kind}, {name}, {ns} are substituted at runtime
+    "BackOff": (
+        "A container is repeatedly crashing and backing off restarts.",
+        "kubectl logs {name} -n {ns}",
+    ),
+    "OOMKilling": (
+        "A container was killed due to out-of-memory. Consider raising its memory limit.",
+        "kubectl describe pod {name} -n {ns}",
+    ),
+    "Unhealthy": (
+        "A liveness or readiness probe is failing. The pod may be starting slowly or misconfigured.",
+        "kubectl logs {name} -n {ns}",
+    ),
+    "FailedScheduling": (
+        "Pod could not be scheduled — check node capacity, taints, tolerations, or affinity rules.",
+        "kubectl describe pod {name} -n {ns}",
+    ),
+    "FailedMount": (
+        "A volume failed to mount. The PVC may be unbound or the node may lack access to the storage backend.",
+        "kubectl describe pod {name} -n {ns}",
+    ),
+    "FailedAttachVolume": (
+        "Volume attachment failed. Check PVC/PV binding and StorageClass provisioner health.",
+        "kubectl describe pod {name} -n {ns}",
+    ),
+    "FailedBinding": (
+        "PVC could not bind to a PV. Check StorageClass, access modes, and available capacity.",
+        "kubectl describe pvc {name} -n {ns}",
+    ),
+    "Evicted": (
+        "Pod was evicted, likely due to node memory or disk pressure.",
+        "kubectl describe pod {name} -n {ns}",
+    ),
+    "NodeNotReady": (
+        "A node went NotReady. Check kubelet status and node resource pressure.",
+        "kubectl describe node {name}",
+    ),
+    "Failed": (
+        "A resource operation failed. Inspect the object for misconfiguration or missing dependencies.",
+        "kubectl describe {kind_lower} {name} -n {ns}",
+    ),
+}
+
+_LOG_REASONS = {"BackOff", "Unhealthy"}
+
+
+def _suggest_from_events(items: list):
+    """Emit targeted print_tip suggestions based on the most actionable warning events."""
+    seen: set[tuple] = set()
+    suggestions = 0
+
+    for e in reversed(items):
+        if suggestions >= 5:
+            break
+
+        reason = e.get("reason", "")
+        obj = e.get("involvedObject", {})
+        kind = obj.get("kind", "")
+        name = obj.get("name", "")
+        ns = obj.get("namespace", "")
+
+        tip_cfg = _EVENT_TIPS.get(reason)
+        if not tip_cfg:
+            continue
+
+        dedup_key = (reason, kind, name, ns)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
+        tip_text, cmd_tpl = tip_cfg
+        cmd = cmd_tpl.format(kind_lower=kind.lower(), name=name, ns=ns)
+        print_tip(f"[{reason}] {tip_text}", cmd)
+        suggestions += 1
 
 
 def describe_object(kind: str, name: str, namespace: str = None):

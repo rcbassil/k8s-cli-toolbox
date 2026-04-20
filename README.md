@@ -6,6 +6,8 @@ A standalone, read-only Python CLI designed to act as a DevOps/SRE assistant for
 
 > **Full object listings:** Every command shows a complete table of all scanned objects (healthy and unhealthy) after its diagnostic summary, so you always have the full picture.
 
+> **Event-driven suggestions:** The `all` command analyzes warning events and automatically emits targeted command suggestions (with auto-execution for `describe` and `logs`) for each actionable issue found.
+
 ## Prerequisites
 
 - Python 3.12+
@@ -55,7 +57,7 @@ uv run main.py pods -n my-app-namespace
 ```
 
 ### 2. `all` — Full Cluster Diagnostic
-Checks Nodes (NotReady), PVCs (Unbound), and Workloads (desired vs ready replicas), then scans cluster-wide Warning events. Prints a complete listing of all nodes, PVCs, and workloads after each section.
+Checks Nodes (NotReady), PVCs (Unbound), and Workloads (desired vs ready replicas), then scans cluster-wide Warning events. Prints a complete listing of all nodes, PVCs, and workloads after each section. After displaying warning events, emits up to 5 targeted command suggestions based on the event reasons (`BackOff`, `OOMKilling`, `FailedScheduling`, `FailedMount`, `Unhealthy`, `Evicted`, `NodeNotReady`, etc.).
 
 ```bash
 uv run main.py all

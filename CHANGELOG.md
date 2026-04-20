@@ -2,14 +2,15 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.2.0] — 2026-04-19
 
 ### Added
 - **`trace` command** — renders a color-coded Rich dependency tree for any Kubernetes object (`pod`, `deployment`, `statefulset`, `daemonset`, `service`, `ingress`, `pvc`). Walks owner references upward and children downward, surfacing warning events at each level.
-- **`vault` command** — diagnoses HashiCorp Vault deployments. Auto-detects namespace via pod labels, checks pod readiness, StatefulSet replica health, and warning events. Detects sealed state via `vault operator status` and prints step-by-step unseal instructions with live unseal progress.
+- **`vault` command** — diagnoses HashiCorp Vault deployments. Auto-detects namespace via pod labels, checks pod readiness, StatefulSet replica health, and warning events. Detects sealed state via `vault status` and prints step-by-step unseal instructions with live unseal progress.
 - **Full object listings** — every command now prints a complete table of all scanned objects (healthy and unhealthy, color-coded) after its diagnostic summary.
-- **Smart auto-execution** — when a diagnostic tip recommends a `kubectl describe` or `kubectl logs` command, the tool now runs it automatically and prints the output inline.
-- **Pre-commit hooks** — `.pre-commit-config.yaml` added with `pre-commit-hooks`, `ruff` linting, and `ruff` formatting.
+- **Smart auto-execution** — when a diagnostic tip recommends a `kubectl describe` or `kubectl logs` command, the tool runs it automatically and prints the output inline.
+- **Event-driven command suggestions** — the `all` command now analyzes warning events and emits up to 5 targeted, deduplicated tips after the events table. Covered reasons: `BackOff`, `OOMKilling`, `Unhealthy`, `FailedScheduling`, `FailedMount`, `FailedAttachVolume`, `FailedBinding`, `Evicted`, `NodeNotReady`, `Failed`.
+- **Pre-commit hooks** — `.pre-commit-config.yaml` with `pre-commit-hooks`, `ruff` linting, and `ruff` formatting.
 
 ### Changed
 - **`cluster` command renamed to `pods`** for clarity.
