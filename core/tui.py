@@ -171,6 +171,20 @@ class HistoryItem(ListItem):
         yield Label(f"[dim]{self.entry.timestamp}[/dim] [cyan]{cmd_display}[/cyan]")
 
 
+class _ScrollableLog(RichLog):
+    @property
+    def allow_vertical_scroll(self) -> bool:
+        return self.is_scrollable
+
+    def on_mouse_scroll_down(self, event) -> None:
+        event.stop()
+        self.scroll_down(animate=False)
+
+    def on_mouse_scroll_up(self, event) -> None:
+        event.stop()
+        self.scroll_up(animate=False)
+
+
 class RemediationItem(ListItem):
     def __init__(self, command: str, index: int) -> None:
         super().__init__()
@@ -423,7 +437,7 @@ class K8sToolApp(App):
                     yield ListView(id="history-list")
 
             with Vertical(id="right-panel"):
-                yield RichLog(id="output-area", highlight=True, markup=True)
+                yield _ScrollableLog(id="output-area", highlight=True, markup=True)
                 with Vertical(id="remediation-section"):
                     yield Static(
                         "✦ Remediation Commands — Enter to copy",
@@ -469,6 +483,14 @@ class K8sToolApp(App):
         ns.cursor_position = len(ns.value)
 
     # ── Standard actions ──────────────────────────────────────────────────
+
+    def on_mouse_scroll_down(self, event) -> None:
+        event.stop()
+        self.query_one("#output-area", _ScrollableLog).scroll_down(animate=False)
+
+    def on_mouse_scroll_up(self, event) -> None:
+        event.stop()
+        self.query_one("#output-area", _ScrollableLog).scroll_up(animate=False)
 
     def action_focus_output(self) -> None:
         self.query_one("#output-area").focus()
@@ -570,12 +592,12 @@ class K8sToolApp(App):
         try:
             parts = shlex.split(raw)
         except ValueError:
-            out = self.query_one("#output-area", RichLog)
+            out = self.query_one("#output-area", _ScrollableLog)
             out.clear()
             out.write("[bold red]Error:[/bold red] Invalid command syntax.")
             return
         if parts[0] not in self._commands:
-            out = self.query_one("#output-area", RichLog)
+            out = self.query_one("#output-area", _ScrollableLog)
             out.clear()
             known = "  ".join(sorted(self._commands))
             out.write(
@@ -624,7 +646,7 @@ class K8sToolApp(App):
     # ── History ───────────────────────────────────────────────────────────
 
     def _show_history_entry(self, entry: _HistoryEntry) -> None:
-        out = self.query_one("#output-area", RichLog)
+        out = self.query_one("#output-area", _ScrollableLog)
         out.clear()
         out.write(
             f"[dim]── history: [cyan]{entry.command}[/cyan]  [{entry.timestamp}]"
@@ -648,7 +670,7 @@ class K8sToolApp(App):
         else:
             effective = _inject_namespace(raw, self._active_namespace)
             effective = _inject_context_flag(effective, self._active_context)
-        out = self.query_one("#output-area", RichLog)
+        out = self.query_one("#output-area", _ScrollableLog)
         out.clear()
         if effective != raw:
             injected = []
@@ -682,7 +704,7 @@ class K8sToolApp(App):
 
         raw_text = f.getvalue()
         result = Text.from_ansi(raw_text)
-        out = self.query_one("#output-area", RichLog)
+        out = self.query_one("#output-area", _ScrollableLog)
         self.call_from_thread(out.clear)
         self.call_from_thread(out.write, result)
         self.call_from_thread(out.focus)

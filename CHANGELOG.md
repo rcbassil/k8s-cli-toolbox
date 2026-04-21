@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here.
 
+## [0.14.0] — 2026-04-21
+
+### Fixed
+- **Dashboard mouse scroll** — scrolling the mouse wheel over the output area now scrolls the output instead of moving the whole dashboard or the terminal buffer. `_ScrollableLog` stops scroll event propagation at the widget level before it can reach the Screen.
+
 ## [0.13.0] — 2026-04-21
 
 ### Added
