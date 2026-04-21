@@ -1,6 +1,9 @@
 import inspect
 import io
+import re
 import shlex
+import subprocess
+import sys
 from collections import deque
 from contextlib import redirect_stdout
 from datetime import datetime
@@ -28,6 +31,9 @@ _DISPLAY_NAMES = {"ask": "ask Claude"}
 
 # Commands that never accept --namespace
 _NO_NS_CMDS = frozenset({"contexts", "flux", "kong"})
+
+# Prefixes treated as actionable commands in AI output
+_CMD_PREFIXES = ("kubectl", "helm", "kubebox", "vault")
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -104,6 +110,57 @@ def _inject_context_flag(command: str, context: str) -> str:
     return command + f" --context {context}"
 
 
+def _extract_commands(text: str) -> list[str]:
+    """Extract actionable kubectl/helm/kubebox commands from AI output text."""
+    commands: list[str] = []
+    seen: set[str] = set()
+
+    def _add(line: str) -> None:
+        line = line.strip()
+        if line and line not in seen:
+            commands.append(line)
+            seen.add(line)
+
+    # Fenced code blocks first (highest confidence)
+    for block in re.finditer(r"```(?:bash|sh|shell|zsh)?\n(.*?)```", text, re.DOTALL):
+        for line in block.group(1).splitlines():
+            stripped = line.strip()
+            if any(stripped.startswith(p) for p in _CMD_PREFIXES):
+                _add(stripped)
+
+    # Bare lines outside code blocks
+    in_block = False
+    for line in text.splitlines():
+        if line.startswith("```"):
+            in_block = not in_block
+            continue
+        if not in_block:
+            stripped = line.strip()
+            if any(stripped.startswith(p) for p in _CMD_PREFIXES):
+                _add(stripped)
+
+    return commands[:9]
+
+
+def _copy_to_clipboard(text: str) -> None:
+    if sys.platform == "darwin":
+        subprocess.run(["pbcopy"], input=text, text=True, check=True)
+    elif sys.platform == "win32":
+        subprocess.run(["clip"], input=text, text=True, check=True)
+    else:
+        try:
+            subprocess.run(
+                ["xclip", "-selection", "clipboard"],
+                input=text,
+                text=True,
+                check=True,
+            )
+        except FileNotFoundError:
+            subprocess.run(
+                ["xsel", "--clipboard", "--input"], input=text, text=True, check=True
+            )
+
+
 # ── List item widgets ─────────────────────────────────────────────────────────
 
 
@@ -133,6 +190,16 @@ class HistoryItem(ListItem):
         yield Label(f"[dim]{self.entry.timestamp}[/dim] [cyan]{cmd_display}[/cyan]")
 
 
+class RemediationItem(ListItem):
+    def __init__(self, command: str, index: int) -> None:
+        super().__init__()
+        self.command = command
+        self.index = index
+
+    def compose(self) -> ComposeResult:
+        yield Label(f"[dim]{self.index}.[/dim] [bold green]{self.command}[/bold green]")
+
+
 # ── Main app ──────────────────────────────────────────────────────────────────
 
 
@@ -145,6 +212,7 @@ class K8sToolApp(App):
         Binding("h", "toggle_history", "History"),
         Binding("c", "focus_context", "Context"),
         Binding("n", "focus_namespace", "Namespace"),
+        Binding("p", "focus_remediation", "Fixes", show=False),
         Binding("r", "rerun_last", "Re-run", show=False),
         Binding("escape", "close_input", "Close"),
     ]
@@ -233,14 +301,42 @@ class K8sToolApp(App):
         height: auto;
         max-height: 9;
     }
+    /* ── Right panel ───────────────────────────────────── */
+    #right-panel {
+        width: 1fr;
+    }
     /* ── Output area ───────────────────────────────────── */
     #output-area {
         width: 1fr;
+        height: 1fr;
         border: solid magenta;
         background: $surface;
     }
     #output-area:focus {
         border: double green;
+    }
+    /* ── Remediation section ───────────────────────────── */
+    #remediation-section {
+        width: 1fr;
+        height: auto;
+        max-height: 12;
+        display: none;
+        border: solid $success;
+    }
+    #remediation-section.visible {
+        display: block;
+    }
+    #remediation-header {
+        background: $boost;
+        color: $success;
+        height: 1;
+        padding: 0 1;
+        text-style: bold;
+    }
+    #remediation-list {
+        width: 1fr;
+        height: auto;
+        max-height: 11;
     }
     /* ── Input bar ─────────────────────────────────────── */
     #input-bar {
@@ -343,7 +439,14 @@ class K8sToolApp(App):
                     yield Static("── history (Enter=replay) ──", id="history-header")
                     yield ListView(id="history-list")
 
-            yield RichLog(id="output-area", highlight=True, markup=True)
+            with Vertical(id="right-panel"):
+                yield RichLog(id="output-area", highlight=True, markup=True)
+                with Vertical(id="remediation-section"):
+                    yield Static(
+                        "✦ Remediation Commands — Enter to copy",
+                        id="remediation-header",
+                    )
+                    yield ListView(id="remediation-list")
 
         with Vertical(id="input-bar"):
             yield Static("", id="input-label")
@@ -354,7 +457,7 @@ class K8sToolApp(App):
         yield Static("", id="help-bar")
         yield Footer()
 
-    # ── Namespace bar ─────────────────────────────────────────────────────
+    # ── Context / namespace bars ──────────────────────────────────────────
 
     def _update_subtitle(self) -> None:
         parts = []
@@ -390,6 +493,11 @@ class K8sToolApp(App):
     def action_focus_list(self) -> None:
         self.query_one("#command-list").focus()
 
+    def action_focus_remediation(self) -> None:
+        section = self.query_one("#remediation-section")
+        if "visible" in section.classes:
+            self.query_one("#remediation-list").focus()
+
     def action_close_input(self) -> None:
         bar = self.query_one("#input-bar")
         if "active" in bar.classes:
@@ -421,6 +529,10 @@ class K8sToolApp(App):
             self.query_one("#help-bar", Static).update(
                 f"[dim]{event.item.help_text}[/dim]"
             )
+        elif isinstance(event.item, RemediationItem):
+            self.query_one("#help-bar", Static).update(
+                "[dim]Enter to copy to clipboard[/dim]"
+            )
 
     # ── Selection routing ─────────────────────────────────────────────────
 
@@ -431,6 +543,8 @@ class K8sToolApp(App):
         elif isinstance(item, HistoryItem):
             self._show_history_entry(item.entry)
             self._last_command = item.entry.command
+        elif isinstance(item, RemediationItem):
+            self._do_copy(item.command)
 
     def trigger_command(self, command_name: str) -> None:
         inp = self.query_one("#cmd-input", Input)
@@ -481,6 +595,39 @@ class K8sToolApp(App):
             )
             return
         self._run_raw(raw)
+
+    # ── Clipboard ─────────────────────────────────────────────────────────
+
+    def _do_copy(self, text: str) -> None:
+        try:
+            _copy_to_clipboard(text)
+            short = text if len(text) <= 60 else text[:57] + "…"
+            self.notify(f"Copied: {short}", title="✓ Clipboard")
+        except Exception as e:
+            self.notify(str(e), title="Copy failed", severity="error")
+
+    # ── Remediation panel ─────────────────────────────────────────────────
+
+    def _update_remediation(self, commands: list[str]) -> None:
+        section = self.query_one("#remediation-section")
+        lst = self.query_one("#remediation-list", ListView)
+        lst.clear()
+        if not commands:
+            section.remove_class("visible")
+            return
+        for i, cmd in enumerate(commands, 1):
+            lst.append(RemediationItem(cmd, i))
+        section.add_class("visible")
+        self.notify(
+            f"{len(commands)} command{'s' if len(commands) != 1 else ''} found — "
+            "select to copy  •  p to focus",
+            title="✦ Remediation",
+        )
+
+    def _clear_remediation(self) -> None:
+        section = self.query_one("#remediation-section")
+        section.remove_class("visible")
+        self.query_one("#remediation-list", ListView).clear()
 
     # ── History ───────────────────────────────────────────────────────────
 
@@ -541,9 +688,17 @@ class K8sToolApp(App):
             except Exception as e:
                 print(f"[bold red]Error:[/bold red] {e}")
 
-        result = Text.from_ansi(f.getvalue())
+        raw_text = f.getvalue()
+        result = Text.from_ansi(raw_text)
         out = self.query_one("#output-area", RichLog)
         self.call_from_thread(out.clear)
         self.call_from_thread(out.write, result)
         self.call_from_thread(out.focus)
         self.call_from_thread(self._add_to_history, raw, result)
+
+        cmd_parts = shlex.split(raw)
+        if cmd_parts and cmd_parts[0] == "ask":
+            cmds = _extract_commands(raw_text)
+            self.call_from_thread(self._update_remediation, cmds)
+        else:
+            self.call_from_thread(self._clear_remediation)
