@@ -8,6 +8,10 @@ A standalone, read-only Python CLI designed to act as a DevOps/SRE assistant for
 
 > **Event-driven suggestions:** The `all` command analyzes warning events and automatically emits targeted command suggestions (with auto-execution for `describe` and `logs`) for each actionable issue found.
 
+## Screenshot
+
+![kubebox dashboard](doc/kubebox_screenshot.svg)
+
 ## Prerequisites
 
 - Python 3.12+
