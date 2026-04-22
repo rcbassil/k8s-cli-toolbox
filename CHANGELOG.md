@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## [0.16.0] — 2026-04-21
+
+### Added
+- **`metrics` command** — fetches CPU and memory usage from `metrics.k8s.io/v1beta1` via the Kubernetes Python client. Shows a node-level table (used vs. allocatable millicores and MiB, color-coded green/yellow/red at 70%/90% thresholds) and a top-20 pods-by-CPU table. Supports `-n` to filter pod metrics to a specific namespace and `--watch / -w` for continuous polling (default interval 15 s). Errors are diagnosed by HTTP status: 404 → not installed (with per-platform install instructions), 403 → RBAC denied, 503 → installed but not yet ready.
+- **`logs --follow / -f` flag** — streams pod/deployment logs in real time via `kubectl logs --follow`. From the CLI the stream flows directly to the terminal (stop with `Ctrl+C`). From the dashboard the stream is piped line-by-line into the output panel; press `Esc` or run any new command to terminate it.
+- **Dashboard metrics panel** — press `m` to toggle a live metrics panel above the output area. Shows node utilization and top 10 pods by CPU for the active namespace. Auto-refreshes every 30 seconds while open; pauses the timer when hidden. Refreshes immediately on context or namespace change. Displays a specific error message when metrics-server is unavailable.
+- **Dashboard `Esc` stops log stream** — pressing `Esc` while `logs --follow` is streaming terminates the subprocess and shows a toast confirmation.
+
+### Changed
+- `get_node_metrics()` and `get_pod_metrics()` now return `(data, error)` tuples instead of bare lists, so callers can distinguish a missing metrics-server (404) from a permissions error (403), a not-yet-ready server (503), and connection failures — each with a distinct human-readable message.
+
 ## [0.15.0] — 2026-04-21
 
 ### Added

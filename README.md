@@ -29,13 +29,13 @@ Every command supports these flags:
 | `--context`   | `-c`  | Target a specific kubeconfig context (e.g. `staging`, `production`). Injected automatically into all `kubectl` and `helm` calls. |
 | `--namespace` | `-n`  | Filter results to a specific namespace (where applicable).                                                                       |
 
-`pods`, `deployments`, and `events` additionally support:
+`pods`, `deployments`, `events`, and `metrics` additionally support:
 
-| Flag         | Short | Description                                                                                                |
-| ------------ | ----- | ---------------------------------------------------------------------------------------------------------- |
-| `--watch`    | `-w`  | Continuously re-run the diagnostic and refresh the screen.                                                 |
-| `--interval` | `-i`  | Polling interval in seconds when `--watch` is active (default: `5` for pods/deployments, `10` for events). |
-| `--output`   | `-o`  | Return raw structured output: `json` or `yaml`. Bypasses Rich display for scripting.                       |
+| Flag         | Short | Description                                                                                                              |
+| ------------ | ----- | ------------------------------------------------------------------------------------------------------------------------ |
+| `--watch`    | `-w`  | Continuously re-run the diagnostic and refresh the screen.                                                               |
+| `--interval` | `-i`  | Polling interval in seconds when `--watch` is active (default: `5` for pods/deployments, `10` for events, `15` for metrics). |
+| `--output`   | `-o`  | Return raw structured output: `json` or `yaml`. Bypasses Rich display for scripting.                                    |
 
 `helm` and `crd` also support `--output / -o`.
 
@@ -132,13 +132,15 @@ Launches a full-screen terminal UI with a command list on the left and scrollabl
 
 **AI remediation panel** — after running `ask Claude`, any `kubectl`/`helm`/`kubebox` commands found in Claude's response appear in a green-bordered panel below the output. Select an entry and press `Enter` to copy it to the clipboard. Press `p` to focus the panel from the keyboard.
 
+**Metrics panel** — press `m` to toggle a live metrics panel above the output area. Shows node CPU and memory utilization (color-coded) and the top 10 pods by CPU for the active namespace. Auto-refreshes every 30 seconds while open; pauses when hidden. Refreshes immediately on context or namespace change. Shows a specific error message when metrics-server is unavailable (404 → not installed, 403 → RBAC, 503 → not yet ready).
+
 **Copy output** — press `y` at any time to copy the current output pane to the clipboard. After running `report` from the dashboard a toast reminds you to press `y` to grab the Markdown.
 
 ```bash
 kubebox dashboard
 ```
 
-Keybindings: `s` focus output · `l` focus list · `h` toggle history · `c` edit context · `n` edit namespace · `y` copy output · `p` focus fixes · `r` re-run · `Esc` cancel · `q` quit.
+Keybindings: `s` focus output · `l` focus list · `h` toggle history · `m` toggle metrics · `c` edit context · `n` edit namespace · `y` copy output · `p` focus fixes · `r` re-run · `Esc` cancel/stop stream · `q` quit.
 
 ### `deployments` — Deployment Health
 
@@ -219,12 +221,25 @@ kubebox kustomize -b ./clusters/my-local-cluster
 
 ### `logs` — Safe Logs Wrapper
 
-Fetches and prints logs for any pod or deployment. Supports tail size and previous-container flags. Add `--analyze` / `-a` to stream an AI root-cause analysis of the logs (requires `ANTHROPIC_API_KEY`).
+Fetches and prints logs for any pod or deployment. Supports tail size and previous-container flags. Add `--follow / -f` to stream logs in real time (stop with `Ctrl+C` from the CLI, or `Esc` / any new command from the dashboard). Add `--analyze` / `-a` to stream an AI root-cause analysis of the logs (requires `ANTHROPIC_API_KEY`).
 
 ```bash
 kubebox logs my-crashing-pod-123 -n prod
 kubebox logs my-crashing-pod-123 -n prod -t 50 -p
+kubebox logs my-crashing-pod-123 -n prod --follow
 kubebox logs my-crashing-pod-123 -n prod --analyze
+```
+
+### `metrics` — Resource Usage (metrics-server)
+
+Fetches CPU and memory usage from `metrics.k8s.io/v1beta1`. Shows a node-level table with used vs. allocatable millicores and MiB (color-coded green/yellow/red at 70%/90% thresholds), followed by a top-20 pods-by-CPU table. Requires [metrics-server](https://github.com/kubernetes-sigs/metrics-server) to be installed in the cluster. For local clusters, enable it with `minikube addons enable metrics-server` or add the `--kubelet-insecure-tls` flag to the metrics-server deployment.
+
+Errors are diagnosed by HTTP status: **404** → not installed (with install instructions), **403** → RBAC permission denied, **503** → installed but not yet ready.
+
+```bash
+kubebox metrics
+kubebox metrics -n prod
+kubebox metrics --watch --interval 30
 ```
 
 ### `network` — Network Diagnostic

@@ -155,6 +155,12 @@ def run_cmd(cmd: list[str]) -> str:
         return ""
 
 
+def prepare_cmd(cmd: list[str]) -> list[str]:
+    """Validate and inject context into a command without running it."""
+    _check_mutative(cmd)
+    return _inject_context(cmd)
+
+
 def run_cmd_allow_fail(cmd: list[str]) -> tuple[str, str, int]:
     """Run a command with security check but return (stdout, stderr, returncode) without raising."""
     _check_mutative(cmd)

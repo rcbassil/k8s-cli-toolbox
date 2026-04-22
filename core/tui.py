@@ -2,10 +2,14 @@ import inspect
 import io
 import re
 import shlex
+import subprocess
+import threading
 from collections import deque
 from contextlib import redirect_stdout
 from datetime import datetime
 
+from rich.console import Console as RichConsole
+from rich.table import Table as RichTable
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
@@ -205,6 +209,7 @@ class K8sToolApp(App):
         Binding("s", "focus_output", "Output"),
         Binding("l", "focus_list", "Commands"),
         Binding("h", "toggle_history", "History"),
+        Binding("m", "toggle_metrics", "Metrics"),
         Binding("c", "focus_context", "Context"),
         Binding("n", "focus_namespace", "Namespace"),
         Binding("p", "focus_remediation", "Fixes", show=False),
@@ -368,6 +373,29 @@ class K8sToolApp(App):
     #cmd-input:focus {
         border: tall yellow;
     }
+    /* ── Metrics section ──────────────────────────────── */
+    #metrics-section {
+        width: 1fr;
+        height: auto;
+        max-height: 18;
+        display: none;
+        border: solid $primary;
+    }
+    #metrics-section.visible {
+        display: block;
+    }
+    #metrics-header {
+        background: $boost;
+        color: $primary;
+        height: 1;
+        padding: 0 1;
+        text-style: bold;
+    }
+    #metrics-area {
+        width: 1fr;
+        height: auto;
+        max-height: 17;
+    }
     /* ── Help bar ──────────────────────────────────────── */
     #help-bar {
         height: 1;
@@ -397,6 +425,9 @@ class K8sToolApp(App):
         self._last_command: str = ""
         self._last_raw_output: str = ""
         self._showing_history: bool = False
+        self._stream_process: subprocess.Popen | None = None
+        self._stream_lock = threading.Lock()
+        self._metrics_refreshing: bool = False
 
     # ── Layout ────────────────────────────────────────────────────────────
 
@@ -440,6 +471,12 @@ class K8sToolApp(App):
                     yield ListView(id="history-list")
 
             with Vertical(id="right-panel"):
+                with Vertical(id="metrics-section"):
+                    yield Static(
+                        "── metrics (m to toggle, auto-refreshes every 30s) ──",
+                        id="metrics-header",
+                    )
+                    yield _ScrollableLog(id="metrics-area", highlight=True, markup=True)
                 yield _ScrollableLog(id="output-area", highlight=True, markup=True)
                 with Vertical(id="remediation-section"):
                     yield Static(
@@ -456,6 +493,16 @@ class K8sToolApp(App):
 
         yield Static("", id="help-bar")
         yield Footer()
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────
+
+    def on_mount(self) -> None:
+        self._metrics_timer = self.set_interval(
+            30, self._auto_refresh_metrics, pause=True
+        )
+
+    def on_unmount(self) -> None:
+        self._stop_active_stream()
 
     # ── Context / namespace bars ──────────────────────────────────────────
 
@@ -521,6 +568,11 @@ class K8sToolApp(App):
             self.query_one("#command-list").focus()
         elif self.query_one("#ns-input", Input).has_focus:
             self.query_one("#command-list").focus()
+        with self._stream_lock:
+            active = self._stream_process is not None
+        if active:
+            self._stop_active_stream()
+            self.notify("Log stream stopped.", title="✓ Stream")
 
     def action_rerun_last(self) -> None:
         if self._last_command:
@@ -535,6 +587,110 @@ class K8sToolApp(App):
             section.add_class("visible")
         else:
             section.remove_class("visible")
+
+    # ── Metrics panel ─────────────────────────────────────────────────────
+
+    def action_toggle_metrics(self) -> None:
+        section = self.query_one("#metrics-section")
+        if "visible" in section.classes:
+            section.remove_class("visible")
+            self._metrics_timer.pause()
+        else:
+            section.add_class("visible")
+            self._refresh_metrics()
+            self._metrics_timer.resume()
+
+    def _auto_refresh_metrics(self) -> None:
+        if "visible" in self.query_one("#metrics-section").classes:
+            self._refresh_metrics()
+
+    @work(thread=True)
+    def _refresh_metrics(self) -> None:
+        if self._metrics_refreshing:
+            return
+        self._metrics_refreshing = True
+        try:
+            from core.kubernetes import get_node_metrics, get_pod_metrics
+
+            node_data, node_err = get_node_metrics()
+            pod_data, pod_err = get_pod_metrics(self._active_namespace or None)
+
+            buf = io.StringIO()
+            c = RichConsole(file=buf, highlight=False, width=120)
+
+            if node_err:
+                c.print(f"[yellow]⚠ {node_err}[/yellow]")
+                if "not installed" in node_err:
+                    c.print(
+                        "[dim]Install: minikube addons enable metrics-server\n"
+                        "or: kubectl apply -f https://github.com/kubernetes-sigs/"
+                        "metrics-server/releases/latest/download/components.yaml[/dim]"
+                    )
+            else:
+                tbl = RichTable(
+                    title="Node Usage", show_header=True, header_style="bold magenta"
+                )
+                tbl.add_column("Node", style="blue")
+                tbl.add_column("CPU used/alloc", justify="right")
+                tbl.add_column("CPU%", justify="right")
+                tbl.add_column("Mem used/alloc (Mi)", justify="right")
+                tbl.add_column("Mem%", justify="right")
+                for n in node_data:
+                    cpu_c = (
+                        "green"
+                        if n["cpu_pct"] < 70
+                        else "yellow"
+                        if n["cpu_pct"] < 90
+                        else "red"
+                    )
+                    mem_c = (
+                        "green"
+                        if n["mem_pct"] < 70
+                        else "yellow"
+                        if n["mem_pct"] < 90
+                        else "red"
+                    )
+                    tbl.add_row(
+                        n["name"],
+                        f"{n['cpu_used_m']}m/{n['cpu_alloc_m']}m",
+                        f"[{cpu_c}]{n['cpu_pct']}%[/{cpu_c}]",
+                        f"{n['mem_used_mi']}/{n['mem_alloc_mi']}",
+                        f"[{mem_c}]{n['mem_pct']}%[/{mem_c}]",
+                    )
+                c.print(tbl)
+
+            if pod_err:
+                c.print(f"[yellow]⚠ pod metrics: {pod_err}[/yellow]")
+            elif pod_data:
+                ns_label = (
+                    f" [{self._active_namespace}]" if self._active_namespace else ""
+                )
+                ptbl = RichTable(
+                    title=f"Top Pods by CPU{ns_label}",
+                    show_header=True,
+                    header_style="bold magenta",
+                )
+                ptbl.add_column("Namespace", style="cyan")
+                ptbl.add_column("Pod", style="blue", no_wrap=True)
+                ptbl.add_column("CPU", justify="right", style="yellow")
+                ptbl.add_column("Mem (Mi)", justify="right", style="cyan")
+                for p in pod_data[:10]:
+                    ptbl.add_row(
+                        p["namespace"], p["name"], f"{p['cpu_m']}m", str(p["mem_mi"])
+                    )
+                c.print(ptbl)
+
+            result = Text.from_ansi(buf.getvalue())
+            ts = datetime.now().strftime("%H:%M:%S")
+            metrics_area = self.query_one("#metrics-area", _ScrollableLog)
+            self.call_from_thread(metrics_area.clear)
+            self.call_from_thread(metrics_area.write, result)
+            self.call_from_thread(
+                self.query_one("#metrics-header", Static).update,
+                f"── metrics — last refresh: {ts}  (m to hide, auto-refreshes every 30s) ──",
+            )
+        finally:
+            self._metrics_refreshing = False
 
     # ── Help bar ──────────────────────────────────────────────────────────
 
@@ -586,6 +742,8 @@ class K8sToolApp(App):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id in ("ctx-input", "ns-input"):
             self.query_one("#command-list").focus()
+            if "visible" in self.query_one("#metrics-section").classes:
+                self._refresh_metrics()
             return
 
         raw = event.value.strip()
@@ -665,9 +823,117 @@ class K8sToolApp(App):
         for e in self._history:
             hist_list.append(HistoryItem(e))
 
+    # ── Log streaming ─────────────────────────────────────────────────────
+
+    def _stop_active_stream(self) -> None:
+        with self._stream_lock:
+            if self._stream_process:
+                try:
+                    self._stream_process.terminate()
+                except Exception:
+                    pass
+                self._stream_process = None
+
+    @staticmethod
+    def _is_follow_logs(parts: list[str]) -> bool:
+        return (
+            bool(parts)
+            and parts[0] == "logs"
+            and ("--follow" in parts or "-f" in parts)
+        )
+
+    def _build_stream_cmd(self, parts: list[str]) -> list[str] | None:
+        """Build a kubectl logs --follow command from parsed 'logs ...' parts."""
+        name = None
+        namespace = None
+        tail = 100
+        previous = False
+        i = 1
+        while i < len(parts):
+            p = parts[i]
+            if p in ("--follow", "-f", "--analyze", "-a"):
+                i += 1
+            elif p in ("-n", "--namespace") and i + 1 < len(parts):
+                namespace = parts[i + 1]
+                i += 2
+            elif p in ("-t", "--tail") and i + 1 < len(parts):
+                try:
+                    tail = int(parts[i + 1])
+                except ValueError:
+                    pass
+                i += 2
+            elif p.startswith("--tail="):
+                try:
+                    tail = int(p.split("=", 1)[1])
+                except ValueError:
+                    pass
+                i += 1
+            elif p in ("-p", "--previous"):
+                previous = True
+                i += 1
+            elif p in ("-c", "--context") and i + 1 < len(parts):
+                i += 2
+            elif p.startswith("--context="):
+                i += 1
+            elif not p.startswith("-"):
+                name = p
+                i += 1
+            else:
+                i += 1
+
+        if not name:
+            return None
+        cmd = ["kubectl", "logs", "--follow", name, f"--tail={tail}"]
+        if namespace:
+            cmd.extend(["-n", namespace])
+        if previous:
+            cmd.append("--previous")
+        if self._active_context:
+            cmd = [cmd[0], "--context", self._active_context] + cmd[1:]
+        return cmd
+
+    @work(thread=True)
+    def _stream_logs_worker(self, cmd: list[str], display_name: str) -> None:
+        out = self.query_one("#output-area", _ScrollableLog)
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+            with self._stream_lock:
+                self._stream_process = proc
+            self.call_from_thread(
+                out.write,
+                f"[bold yellow]Streaming [cyan]{display_name}[/cyan]"
+                " — run another command or press Esc to stop[/bold yellow]",
+            )
+            for line in proc.stdout:
+                if self._stream_process is not proc:
+                    break
+                self.call_from_thread(out.write, Text.from_ansi(line.rstrip("\n")))
+            proc.wait()
+            stderr_out = proc.stderr.read()
+            if proc.returncode != 0 and stderr_out:
+                self.call_from_thread(
+                    out.write,
+                    Text.from_ansi(f"\n[bold red]Error:[/bold red] {stderr_out}"),
+                )
+            self.call_from_thread(out.write, "[dim]── stream ended ──[/dim]")
+        except Exception as e:
+            self.call_from_thread(out.write, f"[bold red]Stream error:[/bold red] {e}")
+        finally:
+            with self._stream_lock:
+                if self._stream_process is proc:
+                    self._stream_process = None
+
     # ── Command execution ─────────────────────────────────────────────────
 
     def _run_raw(self, raw: str, *, skip_namespace_inject: bool = False) -> None:
+        self._stop_active_stream()
         if skip_namespace_inject:
             effective = raw
         else:
@@ -690,6 +956,19 @@ class K8sToolApp(App):
             header = f"[bold yellow]Running [cyan]{effective}[/cyan]...[/bold yellow]"
         out.write(header)
         self._last_command = effective
+
+        try:
+            cmd_parts = shlex.split(effective)
+        except ValueError:
+            cmd_parts = []
+
+        if self._is_follow_logs(cmd_parts):
+            stream_cmd = self._build_stream_cmd(cmd_parts)
+            if stream_cmd:
+                self._stream_logs_worker(
+                    stream_cmd, cmd_parts[1] if len(cmd_parts) > 1 else "pod"
+                )
+                return
         self._execute(effective)
 
     @work(thread=True)

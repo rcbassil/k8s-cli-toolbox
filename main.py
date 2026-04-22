@@ -14,7 +14,7 @@ from prompt_toolkit import PromptSession, HTML
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import FileHistory
 
-from core.utils import set_context, run_cmd
+from core.utils import set_context, run_cmd, prepare_cmd
 from core.kubernetes import (
     check_crashloop_pods,
     check_deployments,
@@ -26,6 +26,7 @@ from core.kubernetes import (
     check_configmaps,
     check_storageclasses,
     check_volumes,
+    check_metrics,
 )
 from core.flux import check_flux_status
 from core.helm import check_helm_status
@@ -597,6 +598,9 @@ def logs(
         help="Get logs for a previously terminated container.",
     ),
     tail: int = typer.Option(100, "--tail", "-t", help="Number of lines to tail."),
+    follow: bool = typer.Option(
+        False, "--follow", "-f", help="Stream logs in real time (Ctrl+C to stop)."
+    ),
     analyze: bool = typer.Option(
         False, "--analyze", "-a", help="Send logs to AI for root-cause analysis."
     ),
@@ -606,6 +610,23 @@ def logs(
 ):
     """Fetch and print logs for a specific K8s object (safe wrapper)."""
     _apply_context(context)
+    if follow:
+        import subprocess as _sp
+
+        cmd = ["kubectl", "logs", "--follow", name, f"--tail={tail}"]
+        if namespace:
+            cmd.extend(["-n", namespace])
+        if previous:
+            cmd.append("--previous")
+        cmd = prepare_cmd(cmd)
+        console.print(
+            f"[bold blue]Streaming logs for [cyan]{name}[/cyan]...  Ctrl+C to stop[/bold blue]"
+        )
+        try:
+            _sp.run(cmd)
+        except KeyboardInterrupt:
+            console.print("\n[dim]Log stream stopped.[/dim]")
+        return
     if analyze:
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -652,6 +673,35 @@ def volumes(
         Panel.fit(f"[bold cyan]Listing PersistentVolumes & PVCs{msg}...[/bold cyan]")
     )
     check_volumes(namespace)
+
+
+@app.command()
+def metrics(
+    namespace: Optional[str] = typer.Option(
+        None, "--namespace", "-n", help="Filter pod metrics by a specific namespace."
+    ),
+    context: Optional[str] = typer.Option(
+        None, "--context", "-c", help="Kubeconfig context to use."
+    ),
+    watch: bool = typer.Option(
+        False, "--watch", "-w", help="Continuously poll for changes."
+    ),
+    interval: int = typer.Option(
+        15, "--interval", "-i", help="Poll interval in seconds (with --watch)."
+    ),
+):
+    """Show CPU and memory usage from metrics-server for nodes and top pods."""
+    _apply_context(context)
+    msg = f" in namespace '{namespace}'" if namespace else ""
+    header = f"[bold cyan]Fetching Cluster Metrics{msg}...[/bold cyan]"
+    if watch:
+        _watch_loop(
+            interval,
+            lambda: (console.print(Panel.fit(header)), check_metrics(namespace)),
+        )
+    else:
+        console.print(Panel.fit(header))
+        check_metrics(namespace)
 
 
 @app.command()

@@ -1101,6 +1101,200 @@ def describe_object(kind: str, name: str, namespace: str = None):
         console.print(Syntax(out, "yaml", theme="monokai", word_wrap=True))
 
 
+def _parse_cpu_to_m(cpu_str: str) -> int:
+    """Parse a Kubernetes CPU quantity string to millicores."""
+    if cpu_str.endswith("m"):
+        return int(cpu_str[:-1])
+    if cpu_str.endswith("n"):
+        return max(1, int(cpu_str[:-1]) // 1_000_000)
+    try:
+        return int(float(cpu_str) * 1000)
+    except ValueError:
+        return 0
+
+
+def _parse_mem_to_mi(mem_str: str) -> int:
+    """Parse a Kubernetes memory quantity string to MiB."""
+    for suffix, shift in (("Ki", 10), ("Mi", 20), ("Gi", 30), ("Ti", 40)):
+        if mem_str.endswith(suffix):
+            return int(float(mem_str[: -len(suffix)]) * (1 << shift) / (1 << 20))
+    for suffix, factor in (("K", 1 / 1024), ("M", 1), ("G", 1024)):
+        if mem_str.endswith(suffix):
+            return int(float(mem_str[:-1]) * factor)
+    try:
+        return int(mem_str) // (1024 * 1024)
+    except ValueError:
+        return 0
+
+
+def _metrics_error_msg(exc: Exception) -> str:
+    """Translate a metrics-server API exception into a user-friendly one-liner."""
+    s = str(exc)
+    # kubernetes ApiException surfaces status as an attribute or in the string
+    status = getattr(exc, "status", None)
+    if status == 404 or "404" in s:
+        return "metrics-server is not installed in this cluster"
+    if status == 403 or "403" in s or "Forbidden" in s:
+        return "permission denied — check RBAC for metrics.k8s.io"
+    if status == 503 or "503" in s or "ServiceUnavailable" in s:
+        return "metrics-server is installed but not yet ready (503)"
+    if "connection refused" in s.lower() or "no route to host" in s.lower():
+        return f"cannot reach API server — {s}"
+    return s.splitlines()[0] if s else "unknown error"
+
+
+def get_node_metrics() -> tuple[list[dict], str]:
+    """Return (data, error) for node CPU/memory from metrics-server.
+
+    error is an empty string on success; a human-readable message otherwise.
+    """
+    if not init_k8s():
+        return [], "kubeconfig not loaded"
+    try:
+        v1 = client.CoreV1Api()
+        custom = client.CustomObjectsApi()
+        nodes = {n.metadata.name: n for n in v1.list_node().items}
+        data = custom.list_cluster_custom_object("metrics.k8s.io", "v1beta1", "nodes")
+        result = []
+        for item in data.get("items", []):
+            name = item["metadata"]["name"]
+            usage = item.get("usage", {})
+            cpu_used = _parse_cpu_to_m(usage.get("cpu", "0"))
+            mem_used = _parse_mem_to_mi(usage.get("memory", "0"))
+            node = nodes.get(name)
+            cpu_alloc = mem_alloc = 0
+            if node:
+                alloc = node.status.allocatable or {}
+                cpu_alloc = _parse_cpu_to_m(alloc.get("cpu", "0"))
+                mem_alloc = _parse_mem_to_mi(alloc.get("memory", "0"))
+            result.append(
+                {
+                    "name": name,
+                    "cpu_used_m": cpu_used,
+                    "cpu_alloc_m": cpu_alloc,
+                    "cpu_pct": round(cpu_used / cpu_alloc * 100) if cpu_alloc else 0,
+                    "mem_used_mi": mem_used,
+                    "mem_alloc_mi": mem_alloc,
+                    "mem_pct": round(mem_used / mem_alloc * 100) if mem_alloc else 0,
+                }
+            )
+        return result, ""
+    except Exception as exc:
+        return [], _metrics_error_msg(exc)
+
+
+def get_pod_metrics(namespace: str = None) -> tuple[list[dict], str]:
+    """Return (data, error) for pod CPU/memory sorted by CPU desc.
+
+    error is an empty string on success; a human-readable message otherwise.
+    """
+    if not init_k8s():
+        return [], "kubeconfig not loaded"
+    try:
+        custom = client.CustomObjectsApi()
+        if namespace:
+            data = custom.list_namespaced_custom_object(
+                "metrics.k8s.io", "v1beta1", namespace, "pods"
+            )
+        else:
+            data = custom.list_cluster_custom_object(
+                "metrics.k8s.io", "v1beta1", "pods"
+            )
+        result = []
+        for item in data.get("items", []):
+            meta = item["metadata"]
+            containers = item.get("containers", [])
+            cpu_total = sum(
+                _parse_cpu_to_m(c.get("usage", {}).get("cpu", "0")) for c in containers
+            )
+            mem_total = sum(
+                _parse_mem_to_mi(c.get("usage", {}).get("memory", "0"))
+                for c in containers
+            )
+            result.append(
+                {
+                    "namespace": meta.get("namespace", ""),
+                    "name": meta.get("name", ""),
+                    "cpu_m": cpu_total,
+                    "mem_mi": mem_total,
+                }
+            )
+        return sorted(result, key=lambda x: x["cpu_m"], reverse=True), ""
+    except Exception as exc:
+        return [], _metrics_error_msg(exc)
+
+
+def _print_metrics_error(error: str) -> None:
+    status_404 = "not installed" in error
+    console.print(f"[yellow]⚠ {error}[/yellow]")
+    if status_404:
+        console.print(
+            "[dim]Install metrics-server:\n"
+            "  kubectl apply -f https://github.com/kubernetes-sigs/metrics-server"
+            "/releases/latest/download/components.yaml\n\n"
+            "For local clusters (minikube / kind / k3s) you may need:\n"
+            "  minikube addons enable metrics-server\n"
+            "  --kubelet-insecure-tls flag in the metrics-server deployment[/dim]"
+        )
+
+
+def check_metrics(namespace: str = None):
+    """Display CPU and memory usage from metrics-server for nodes and top pods."""
+    if not init_k8s():
+        return
+    console.print("[bold blue]Fetching metrics-server data...[/bold blue]")
+
+    node_data, node_err = get_node_metrics()
+    if node_err:
+        _print_metrics_error(node_err)
+        return
+    table = Table(
+        title="Node Resource Usage", show_header=True, header_style="bold magenta"
+    )
+    table.add_column("Node", style="blue")
+    table.add_column("CPU used / alloc", justify="right")
+    table.add_column("CPU %", justify="right")
+    table.add_column("Mem used / alloc (Mi)", justify="right")
+    table.add_column("Mem %", justify="right")
+    for n in node_data:
+        cpu_c = (
+            "green" if n["cpu_pct"] < 70 else "yellow" if n["cpu_pct"] < 90 else "red"
+        )
+        mem_c = (
+            "green" if n["mem_pct"] < 70 else "yellow" if n["mem_pct"] < 90 else "red"
+        )
+        table.add_row(
+            n["name"],
+            f"{n['cpu_used_m']}m / {n['cpu_alloc_m']}m",
+            f"[{cpu_c}]{n['cpu_pct']}%[/{cpu_c}]",
+            f"{n['mem_used_mi']} / {n['mem_alloc_mi']}",
+            f"[{mem_c}]{n['mem_pct']}%[/{mem_c}]",
+        )
+    console.print(table)
+
+    pod_data, pod_err = get_pod_metrics(namespace)
+    if pod_err:
+        console.print(f"[yellow]⚠ pod metrics: {pod_err}[/yellow]")
+    elif pod_data:
+        msg = f" in '{namespace}'" if namespace else " (all namespaces, top 20 by CPU)"
+        pod_table = Table(
+            title=f"Pod Resource Usage{msg}",
+            show_header=True,
+            header_style="bold magenta",
+        )
+        pod_table.add_column("Namespace", style="cyan")
+        pod_table.add_column("Pod", style="blue")
+        pod_table.add_column("CPU", justify="right", style="yellow")
+        pod_table.add_column("Memory (Mi)", justify="right", style="cyan")
+        for p in pod_data[:20]:
+            pod_table.add_row(
+                p["namespace"], p["name"], f"{p['cpu_m']}m", str(p["mem_mi"])
+            )
+        console.print(pod_table)
+    else:
+        console.print("[dim]No pod metrics available.[/dim]")
+
+
 def check_logs(
     name: str, namespace: str = None, previous: bool = False, tail: int = 100
 ):
