@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import anthropic
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
+import base64
 from kubernetes import client
 from kubernetes import config as k8s_config
 from rich.console import Console
@@ -580,7 +580,7 @@ with st.sidebar:
     sel_ns = "" if sel_ns_label == "(all namespaces)" else sel_ns_label
 
     st.divider()
-    if st.button("🔄 Refresh all", use_container_width=True):
+    if st.button("🔄 Refresh all", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 
@@ -654,7 +654,7 @@ with tab_overview:
         st.subheader("Nodes")
         if nodes:
             df = pd.DataFrame(nodes)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
         else:
             st.info("No nodes found — is the cluster reachable?")
 
@@ -662,7 +662,7 @@ with tab_overview:
         st.subheader("Failing Pods")
         if failing_pods:
             df = pd.DataFrame(failing_pods)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
         else:
             st.success("✓ All pods are healthy")
 
@@ -706,7 +706,7 @@ with tab_pods:
     if pods:
         st.caption(f"{len(pods)} pods")
         df = pd.DataFrame(pods)
-        st.dataframe(df, use_container_width=True, hide_index=True, height=420)
+        st.dataframe(df, width="stretch", hide_index=True, height=420)
     else:
         st.info("No pods match the current filters.")
 
@@ -783,7 +783,7 @@ with tab_workloads:
         with st.spinner("Loading deployments…"):
             deps = fetch_deployments(_ctx, _ns)
         if deps:
-            st.dataframe(pd.DataFrame(deps), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(deps), width="stretch", hide_index=True)
         else:
             st.info("No deployments found.")
 
@@ -791,7 +791,7 @@ with tab_workloads:
         with st.spinner("Loading StatefulSets…"):
             sts = fetch_statefulsets(_ctx, _ns)
         if sts:
-            st.dataframe(pd.DataFrame(sts), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(sts), width="stretch", hide_index=True)
         else:
             st.info("No StatefulSets found.")
 
@@ -799,9 +799,7 @@ with tab_workloads:
         with st.spinner("Loading DaemonSets…"):
             ds_list = fetch_daemonsets(_ctx, _ns)
         if ds_list:
-            st.dataframe(
-                pd.DataFrame(ds_list), use_container_width=True, hide_index=True
-            )
+            st.dataframe(pd.DataFrame(ds_list), width="stretch", hide_index=True)
         else:
             st.info("No DaemonSets found.")
 
@@ -809,7 +807,7 @@ with tab_workloads:
         with st.spinner("Loading services…"):
             svcs = fetch_services(_ctx, _ns)
         if svcs:
-            st.dataframe(pd.DataFrame(svcs), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(svcs), width="stretch", hide_index=True)
         else:
             st.info("No services found.")
 
@@ -861,7 +859,7 @@ with tab_events:
 
         st.dataframe(
             df.style.apply(_color_row, axis=1),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=520,
         )
@@ -885,7 +883,7 @@ with tab_storage:
                 st.warning(f"{unbound} unbound PVC(s)")
             else:
                 st.success("✓ All PVCs are Bound")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
         else:
             st.info("No PVCs found.")
 
@@ -893,7 +891,7 @@ with tab_storage:
         with st.spinner("Loading PVs…"):
             pvs = fetch_pvs(_ctx)
         if pvs:
-            st.dataframe(pd.DataFrame(pvs), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(pvs), width="stretch", hide_index=True)
         else:
             st.info("No PVs found.")
 
@@ -901,7 +899,7 @@ with tab_storage:
         with st.spinner("Loading StorageClasses…"):
             scs = fetch_storageclasses(_ctx)
         if scs:
-            st.dataframe(pd.DataFrame(scs), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(scs), width="stretch", hide_index=True)
         else:
             st.info("No StorageClasses found.")
 
@@ -916,7 +914,7 @@ with tab_config:
         with st.spinner("Loading ConfigMaps…"):
             cms = fetch_configmaps(_ctx, _ns)
         if cms:
-            st.dataframe(pd.DataFrame(cms), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(cms), width="stretch", hide_index=True)
         else:
             st.info("No ConfigMaps found.")
 
@@ -925,9 +923,7 @@ with tab_config:
         with st.spinner("Loading Secrets…"):
             secrets = fetch_secrets(_ctx, _ns)
         if secrets:
-            st.dataframe(
-                pd.DataFrame(secrets), use_container_width=True, hide_index=True
-            )
+            st.dataframe(pd.DataFrame(secrets), width="stretch", hide_index=True)
         else:
             st.info("No Secrets found.")
 
@@ -1023,7 +1019,8 @@ with tab_graph:
             with st.spinner("Rendering…"):
                 html = render_graph(G, height=720)
 
-            components.html(html, height=740, scrolling=False)
+            html_b64 = base64.b64encode(html.encode()).decode()
+            st.iframe(f"data:text/html;base64,{html_b64}", height=740)
 
 # ─── AI Assistant ────────────────────────────────────────────────────────────
 

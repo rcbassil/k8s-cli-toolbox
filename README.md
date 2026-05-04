@@ -62,10 +62,10 @@ uv run main.py dashboard
 
 **Streamlit web dashboard:**
 ```bash
-uv run streamlit run streamlit_app.py
+uv run main.py web
 ```
 
-Then open [http://localhost:8501](http://localhost:8501) in your browser.
+Then open [http://localhost:8502](http://localhost:8502) in your browser.
 
 ## Web Dashboard
 
@@ -119,8 +119,8 @@ Package the toolbox into a single binary using [PyInstaller](https://pyinstaller
 # Install PyInstaller (once)
 uv add --dev pyinstaller
 
-# Build
-uv run --group dev python -m PyInstaller --onefile --name kubebox main.py
+# Build (bundles streamlit_app.py and the core package automatically)
+make build
 
 # Run or install globally
 ./dist/kubebox --help
@@ -389,6 +389,15 @@ kubebox trace pvc my-claim -n prod
 kubebox trace pod my-crashing-pod-xyz -n prod
 ```
 
+### `vault` — HashiCorp Vault
+
+Locates Vault **server** pods automatically by label (`app.kubernetes.io/name=vault` or `app=vault`), excluding injector sidecars. Checks pod readiness, StatefulSet replica health, and warning events (with **Last Seen** ages). If Vault is **sealed**, detects it via `vault status`, shows current unseal progress, and prints step-by-step unseal instructions listing only the other sealed replicas for HA deployments.
+
+```bash
+kubebox vault
+kubebox vault -n vault-system
+```
+
 ### `volumes` — PersistentVolumes & PVCs
 
 Shows PersistentVolumes (cluster-wide) and PersistentVolumeClaims in a single view. Surfaces PVs in non-Bound/Available states and unbound PVCs. Use `-n` to filter PVCs to a specific namespace. Shown as **pv & pvc** in the TUI dashboard list.
@@ -398,11 +407,17 @@ kubebox volumes
 kubebox volumes -n my-namespace
 ```
 
-### `vault` — HashiCorp Vault
+### `web` — Streamlit Web Dashboard
 
-Locates Vault **server** pods automatically by label (`app.kubernetes.io/name=vault` or `app=vault`), excluding injector sidecars. Checks pod readiness, StatefulSet replica health, and warning events (with **Last Seen** ages). If Vault is **sealed**, detects it via `vault status`, shows current unseal progress, and prints step-by-step unseal instructions listing only the other sealed replicas for HA deployments.
+Launches the browser-based Streamlit dashboard. Opens the browser automatically by default. Use `--no-browser` to suppress it (useful for remote/headless servers).
+
+| Flag          | Short | Description                                    |
+| ------------- | ----- | ---------------------------------------------- |
+| `--port`      | `-p`  | Port to listen on (default: `8502`).           |
+| `--no-browser` |      | Don't open the browser automatically.          |
 
 ```bash
-kubebox vault
-kubebox vault -n vault-system
+kubebox web
+kubebox web --port 9000
+kubebox web --no-browser
 ```

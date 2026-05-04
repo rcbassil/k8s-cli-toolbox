@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Pyvis-generated assets
+lib/
+
 # Tool caches
 .ruff_cache
 .pre-commit-cache

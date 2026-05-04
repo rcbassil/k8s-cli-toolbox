@@ -408,7 +408,7 @@ class K8sToolApp(App):
     def __init__(self, typer_app) -> None:
         super().__init__()
         self.typer_app = typer_app
-        skip = {"dashboard", "interactive"}
+        skip = {"dashboard", "interactive", "web"}
         self._commands = dict(
             sorted(
                 (

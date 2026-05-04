@@ -756,5 +756,62 @@ def dashboard():
     ui.run()
 
 
+@app.command()
+def web(
+    port: int = typer.Option(8502, "--port", "-p", help="Port to listen on."),
+    browser: bool = typer.Option(
+        True, "--browser/--no-browser", help="Open browser automatically."
+    ),
+):
+    """Launch the Streamlit web dashboard."""
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # When frozen, PyInstaller extracts bundled data to sys._MEIPASS.
+    if getattr(sys, "frozen", False):
+        app_path = Path(sys._MEIPASS) / "streamlit_app.py"
+    else:
+        app_path = Path(__file__).parent / "streamlit_app.py"
+
+    # 1. Try importing streamlit directly (works under uv run / activated venv).
+    try:
+        from streamlit.web import bootstrap
+
+        bootstrap.run(
+            str(app_path), "", [], {"server.port": port, "server.headless": not browser}
+        )
+        return
+    except ImportError:
+        pass
+
+    # 2. Look for the streamlit binary — PATH first, then the local .venv.
+    streamlit_bin = shutil.which("streamlit") or str(
+        Path.cwd() / ".venv" / "bin" / "streamlit"
+    )
+    if not Path(streamlit_bin).exists():
+        console.print(
+            "[bold red]Error:[/bold red] streamlit not found. "
+            "Run [bold]uv sync[/bold] and try again."
+        )
+        raise typer.Exit(1)
+
+    env = os.environ.copy()
+    if getattr(sys, "frozen", False):
+        env["PYTHONPATH"] = str(sys._MEIPASS)
+    subprocess.run(
+        [
+            streamlit_bin,
+            "run",
+            str(app_path),
+            "--server.port",
+            str(port),
+            f"--server.headless={'false' if browser else 'true'}",
+        ],
+        env=env,
+    )
+
+
 if __name__ == "__main__":
     app(prog_name="kubebox")
