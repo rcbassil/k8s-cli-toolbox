@@ -85,6 +85,32 @@ Then open [http://localhost:8501](http://localhost:8501) in your browser.
 
 All K8s data is cached per context+namespace with a 20–60 second TTL. The AI assistant requires `ANTHROPIC_API_KEY`.
 
+### Configuration
+
+Create `.streamlit/config.toml` in the project root to persist settings across runs:
+
+```toml
+[server]
+port = 8501          # default port; override with kubebox web --port
+headless = false     # set to true for remote / headless servers
+
+[browser]
+gatherUsageStats = false
+
+[global]
+developmentMode = false
+
+[theme]
+base = "dark"
+# Optional: uncomment to customise colours
+# primaryColor     = "#7aa2f7"
+# backgroundColor  = "#1a1b26"
+# secondaryBackgroundColor = "#24283b"
+# textColor        = "#c0caf5"
+```
+
+Settings in this file are picked up automatically by `kubebox web` and `make dev`. Flags passed on the command line (e.g. `--port`) take precedence over the file.
+
 ### Screenshots
 
 **Cluster Overview**
