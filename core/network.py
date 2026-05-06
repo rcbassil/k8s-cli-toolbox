@@ -83,6 +83,20 @@ def _check_endpoints(v1, namespace: str):
             else v1.list_service_for_all_namespaces().items
         )
 
+        # Fetch all endpoints in one call and build a lookup map instead of
+        # making one read_namespaced_endpoints request per service (N+1).
+        all_eps = (
+            v1.list_namespaced_endpoints(namespace).items
+            if namespace
+            else v1.list_endpoints_for_all_namespaces().items
+        )
+        ep_ready: dict[tuple[str, str], int] = {
+            (ep.metadata.namespace, ep.metadata.name): sum(
+                len(s.addresses or []) for s in (ep.subsets or [])
+            )
+            for ep in all_eps
+        }
+
         no_endpoints = []
         for svc in services:
             if svc.spec.type == "ExternalName" or svc.spec.cluster_ip == "None":
@@ -91,13 +105,9 @@ def _check_endpoints(v1, namespace: str):
                 continue
             ns = svc.metadata.namespace
             name = svc.metadata.name
-            try:
-                ep = v1.read_namespaced_endpoints(name, ns)
-                ready = sum(len(s.addresses or []) for s in (ep.subsets or []))
-                if ready == 0:
-                    no_endpoints.append((ns, name, svc.spec.type or "ClusterIP"))
-            except Exception:
-                pass
+            ready = ep_ready.get((ns, name), 0)
+            if ready == 0:
+                no_endpoints.append((ns, name, svc.spec.type or "ClusterIP"))
 
         if no_endpoints:
             table = Table(show_header=True, header_style="bold magenta")

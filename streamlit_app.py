@@ -1,6 +1,7 @@
 import importlib
 import io
 import os
+from concurrent.futures import ThreadPoolExecutor, wait as _fut_wait
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -88,7 +89,7 @@ def _age(dt) -> str:
 # set by set_context() before we ever reach these cached calls.
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_namespaces(ctx: str) -> list[str]:
     if not init_k8s():
         return []
@@ -98,7 +99,7 @@ def fetch_namespaces(ctx: str) -> list[str]:
         return []
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_nodes(ctx: str) -> list[dict]:
     if not init_k8s():
         return []
@@ -130,7 +131,7 @@ def fetch_nodes(ctx: str) -> list[dict]:
     return rows
 
 
-@st.cache_data(ttl=20, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def fetch_pods(ctx: str, ns: str) -> list[dict]:
     if not init_k8s():
         return []
@@ -352,7 +353,7 @@ def fetch_pvcs(ctx: str, ns: str) -> list[dict]:
     ]
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_pvs(ctx: str) -> list[dict]:
     if not init_k8s():
         return []
@@ -379,7 +380,7 @@ def fetch_pvs(ctx: str) -> list[dict]:
     ]
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_storageclasses(ctx: str) -> list[dict]:
     if not init_k8s():
         return []
@@ -590,6 +591,28 @@ with st.sidebar:
 # Convenience aliases used throughout
 _ctx = sel_ctx or ""
 _ns = sel_ns or ""
+
+# ─── Parallel Cache Pre-Warm ─────────────────────────────────────────────────
+# Kick off all tab data fetches concurrently. On a cache miss (first load or
+# after TTL expiry) this reduces wall-clock time from Σ(round-trips) to
+# max(round-trips). On a cache hit every submission returns immediately.
+with ThreadPoolExecutor(max_workers=8) as _ex:
+    _fut_wait(
+        [
+            _ex.submit(fetch_pods, _ctx, _ns),
+            _ex.submit(fetch_nodes, _ctx),
+            _ex.submit(fetch_deployments, _ctx, _ns),
+            _ex.submit(fetch_statefulsets, _ctx, _ns),
+            _ex.submit(fetch_daemonsets, _ctx, _ns),
+            _ex.submit(fetch_services, _ctx, _ns),
+            _ex.submit(fetch_events, _ctx, _ns),
+            _ex.submit(fetch_pvcs, _ctx, _ns),
+            _ex.submit(fetch_pvs, _ctx),
+            _ex.submit(fetch_storageclasses, _ctx),
+            _ex.submit(fetch_configmaps, _ctx, _ns),
+            _ex.submit(fetch_secrets, _ctx, _ns),
+        ]
+    )
 
 # ─── Top-level Tabs ──────────────────────────────────────────────────────────
 
