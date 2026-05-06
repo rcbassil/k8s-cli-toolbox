@@ -61,7 +61,7 @@ uv run main.py dashboard
 uv run main.py web
 ```
 
-Then open [http://localhost:8502](http://localhost:8502) in your browser.
+Then open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ## Web Dashboard
 
@@ -112,12 +112,10 @@ All K8s data is cached per context+namespace with a 20–60 second TTL. The AI a
 Package the toolbox into a single binary using [PyInstaller](https://pyinstaller.org/):
 
 ```bash
-# Build (syncs dependencies, installs PyInstaller, and bundles the binary)
-make build
-
-# Run or install globally
-./dist/kubebox --help
-sudo mv ./dist/kubebox /usr/local/bin/kubebox
+make build          # sync deps and bundle into dist/kubebox
+make install        # build + copy binary to /usr/local/bin
+make dev            # run directly via uv (no build step)
+make help           # list all available targets
 ```
 
 ## Commands
@@ -408,7 +406,7 @@ Launches the browser-based Streamlit dashboard. Opens the browser automatically 
 
 | Flag          | Short | Description                                    |
 | ------------- | ----- | ---------------------------------------------- |
-| `--port`      | `-p`  | Port to listen on (default: `8502`).           |
+| `--port`      | `-p`  | Port to listen on (default: `8501`).           |
 | `--no-browser` |      | Don't open the browser automatically.          |
 
 ```bash

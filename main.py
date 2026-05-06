@@ -758,59 +758,61 @@ def dashboard():
 
 @app.command()
 def web(
-    port: int = typer.Option(8502, "--port", "-p", help="Port to listen on."),
+    port: int = typer.Option(
+        8501, "--port", "-p", help="Port to run the dashboard on."
+    ),
     browser: bool = typer.Option(
         True, "--browser/--no-browser", help="Open browser automatically."
     ),
+    context: Optional[str] = typer.Option(
+        None, "--context", "-c", help="Kubeconfig context."
+    ),
 ):
-    """Launch the Streamlit web dashboard."""
-    import shutil
-    import subprocess
+    """Launch the diagnostic web dashboard."""
     import sys
     from pathlib import Path
 
-    # When frozen, PyInstaller extracts bundled data to sys._MEIPASS.
+    _apply_context(context)
+
     if getattr(sys, "frozen", False):
-        app_path = Path(sys._MEIPASS) / "streamlit_app.py"
+        bundle_dir = Path(sys._MEIPASS)
+        if str(bundle_dir) not in sys.path:
+            sys.path.insert(0, str(bundle_dir))
+        os.environ["STREAMLIT_GLOBAL_DEVELOPMENT_MODE"] = "false"
+        os.environ["STREAMLIT_CONFIG_FILE"] = str(bundle_dir / "dummy.toml")
+        app_path = bundle_dir / "streamlit_app.py"
     else:
         app_path = Path(__file__).parent / "streamlit_app.py"
 
-    # 1. Try importing streamlit directly (works under uv run / activated venv).
+    if not app_path.exists():
+        console.print(f"[bold red]Dashboard app not found:[/bold red] {app_path}")
+        raise typer.Exit(1)
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Starting web dashboard on[/bold cyan] [green]http://localhost:{port}[/green]\n"
+            f"[dim]Press Ctrl+C to stop.[/dim]"
+        )
+    )
+
     try:
         from streamlit.web import bootstrap
 
-        bootstrap.run(
-            str(app_path), "", [], {"server.port": port, "server.headless": not browser}
-        )
-        return
-    except ImportError:
-        pass
-
-    # 2. Look for the streamlit binary — PATH first, then the local .venv.
-    streamlit_bin = shutil.which("streamlit") or str(
-        Path.cwd() / ".venv" / "bin" / "streamlit"
-    )
-    if not Path(streamlit_bin).exists():
+        flag_options = {
+            "server.port": port,
+            "server.headless": not browser,
+            "global.developmentMode": False,
+            "browser.gatherUsageStats": False,
+        }
+        bootstrap.run(str(app_path), False, [], flag_options)
+    except OSError as e:
         console.print(
-            "[bold red]Error:[/bold red] streamlit not found. "
-            "Run [bold]uv sync[/bold] and try again."
+            f"[bold red]Could not start server:[/bold red] {e} — is port {port} already in use?"
         )
         raise typer.Exit(1)
-
-    env = os.environ.copy()
-    if getattr(sys, "frozen", False):
-        env["PYTHONPATH"] = str(sys._MEIPASS)
-    subprocess.run(
-        [
-            streamlit_bin,
-            "run",
-            str(app_path),
-            "--server.port",
-            str(port),
-            f"--server.headless={'false' if browser else 'true'}",
-        ],
-        env=env,
-    )
+    except Exception as e:
+        console.print(f"[bold red]Application error:[/bold red] {e}")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
