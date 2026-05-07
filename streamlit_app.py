@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import anthropic
-import pandas as pd
 import streamlit as st
 import base64
 from kubernetes import client
@@ -593,12 +592,19 @@ _ctx = sel_ctx or ""
 _ns = sel_ns or ""
 
 # ─── Parallel Cache Pre-Warm ─────────────────────────────────────────────────
-# Kick off all tab data fetches concurrently. On a cache miss (first load or
-# after TTL expiry) this reduces wall-clock time from Σ(round-trips) to
-# max(round-trips). On a cache hit every submission returns immediately.
-with ThreadPoolExecutor(max_workers=8) as _ex:
+# Kick off all tab data fetches concurrently. pandas is also loaded here so
+# its ~400ms import overlaps with Kubernetes round-trips instead of blocking
+# them. On a cache hit every submission returns immediately.
+
+
+def _load_pandas():
+    import pandas  # noqa: F401
+
+
+with ThreadPoolExecutor(max_workers=9) as _ex:
     _fut_wait(
         [
+            _ex.submit(_load_pandas),
             _ex.submit(fetch_pods, _ctx, _ns),
             _ex.submit(fetch_nodes, _ctx),
             _ex.submit(fetch_deployments, _ctx, _ns),
@@ -613,6 +619,8 @@ with ThreadPoolExecutor(max_workers=8) as _ex:
             _ex.submit(fetch_secrets, _ctx, _ns),
         ]
     )
+
+import pandas as pd  # noqa: E402 — instant cache hit after _load_pandas completes
 
 # ─── Top-level Tabs ──────────────────────────────────────────────────────────
 

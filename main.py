@@ -34,7 +34,6 @@ from core.kong import check_kong_errors
 from core.kustomize import check_kustomize_errors
 from core.vault import check_vault_status
 from core.trace import trace_object
-from core.ai import analyze_logs, ask as ai_ask
 from core.crd import check_crd_status
 from core.events import check_events
 from core.network import check_network_status
@@ -266,6 +265,8 @@ def ask(
             diagnostic_context += "\n\n--- Failing Pod Logs ---\n" + "\n\n".join(
                 log_sections
             )
+
+    from core.ai import ask as ai_ask
 
     ai_ask(question, diagnostic_context)
 
@@ -634,6 +635,8 @@ def logs(
         logs_output = buf.getvalue()
         print(logs_output)
         resource = name + (f" -n {namespace}" if namespace else "")
+        from core.ai import analyze_logs
+
         analyze_logs(logs_output, resource)
     else:
         check_logs(name, namespace, previous, tail)
